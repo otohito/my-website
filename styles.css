@@ -44,6 +44,14 @@ body{
 .blob-1{width:360px;height:360px;right:-80px;top:-80px;background:linear-gradient(180deg,var(--accent-2),var(--accent-1));transform:translateZ(0)}
 .blob-2{width:220px;height:220px;left:-60px;bottom:-60px;background:linear-gradient(180deg,rgba(59,130,246,0.45),rgba(110,231,183,0.35))}
 
+/* hero image */
+.hero-figure{position:absolute;right:48px;top:36px;width:360px;border-radius:16px;overflow:hidden;border:1px solid rgba(255,255,255,0.06);box-shadow:0 12px 40px rgba(2,8,23,0.6);display:block}
+.hero-figure img{width:100%;height:100%;object-fit:cover;display:block}
+
+@media (max-width:900px){
+  .hero-figure{display:none}
+}
+
 .section{padding:64px 0}
 .section-title{font-size:20px;margin:0 0 10px}
 .lead{color:var(--muted);max-width:720px}
