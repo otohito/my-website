@@ -1,2 +1,3 @@
 # my-website
-はじめてのwebサイト
+はじめてのwebサイト  
+https://otohito.github.io/my-website/
