@@ -43,6 +43,8 @@
     .controls { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .button { color: #eef2ff; border: 1px solid rgba(148,163,184,0.25); background: rgba(148,163,184,0.08); border-radius: 999px; padding: 12px 18px; font-weight: 600; text-decoration: none; cursor: pointer; transition: transform .18s ease, background .18s ease; }
     .button:hover { background: rgba(59,130,246,0.18); transform: translateY(-1px); }
+    .select-label { display: inline-flex; align-items: center; gap: 10px; }
+    .select-label select { appearance: none; background: transparent; color: inherit; border: none; padding: 0; font: inherit; cursor: pointer; }
     .small-note { color: #94a3b8; margin-top: 14px; font-size: 0.95rem; text-align: center; }
     .footer-note { text-align: center; margin-top: 18px; color: #64748b; font-size: 0.92rem; }
     @media (max-width: 720px) {
@@ -71,24 +73,54 @@
       <div class="board" id="board" role="grid" aria-label="オセロ盤"></div>
       <div class="controls">
         <button class="button" id="restart">リスタート</button>
+        <label class="button select-label" for="difficulty">
+          難易度
+          <select id="difficulty" aria-label="コンピューターの難易度">
+            <option value="easy">優しい</option>
+            <option value="normal" selected>普通</option>
+            <option value="hard">難しい</option>
+          </select>
+        </label>
+        <button class="button" id="toggle-music">BGM ON</button>
       </div>
       <p class="small-note" id="game-message">あなたの手番です。</p>
-      <p class="footer-note">対戦相手は同じ画面内のプレイヤーです。</p>
+      <p class="footer-note">対戦相手はコンピューターです。黒があなた、白がAIです。</p>
     </section>
   </main>
   <script>
     const SIZE = 8;
     const EMPTY = 0, BLACK = 1, WHITE = 2;
+    const HUMAN = BLACK;
+    const COMPUTER = WHITE;
+    const POSITION_SCORE = [
+      [ 120, -20,  20,  5,  5, 20, -20, 120],
+      [ -20, -40,  -5, -5, -5, -5, -40, -20],
+      [ 20,  -5,  15,  3,  3, 15,  -5,  20],
+      [ 5,  -5,   3,  3,  3,  3,  -5,   5],
+      [ 5,  -5,   3,  3,  3,  3,  -5,   5],
+      [ 20,  -5,  15,  3,  3, 15,  -5,  20],
+      [ -20, -40,  -5, -5, -5, -5, -40, -20],
+      [ 120, -20,  20,  5,  5, 20, -20, 120]
+    ];
+
     let board = [];
     let currentPlayer = BLACK;
+    let difficulty = 'normal';
+    let audioContext = null;
+    let bgmTimer = null;
+    let bgmIsPlaying = false;
+
     const boardEl = document.getElementById('board');
     const currentPlayerEl = document.getElementById('current-player');
     const blackScoreEl = document.getElementById('black-score');
     const whiteScoreEl = document.getElementById('white-score');
     const messageEl = document.getElementById('game-message');
     const restartBtn = document.getElementById('restart');
+    const difficultySelect = document.getElementById('difficulty');
+    const toggleMusicBtn = document.getElementById('toggle-music');
+
     const directions = [
-      [-1,-1],[-1,0],[-1,1],[0,-1],[0,1],[1,-1],[1,0],[1,1]
+      [-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]
     ];
 
     function createBoard() {
@@ -128,13 +160,15 @@
       return flips;
     }
 
-    function hasValidMoves(player) {
+    function getValidMoves(player) {
+      const moves = [];
       for (let r = 0; r < SIZE; r++) {
         for (let c = 0; c < SIZE; c++) {
-          if (getFlips(r, c, player).length) return true;
+          const flips = getFlips(r, c, player);
+          if (flips.length) moves.push({ row: r, col: c, flips });
         }
       }
-      return false;
+      return moves;
     }
 
     function countStones() {
@@ -164,17 +198,16 @@
 
     function renderBoard() {
       boardEl.innerHTML = '';
-      const validMoves = [];
+      const validMoves = getValidMoves(currentPlayer);
       for (let r = 0; r < SIZE; r++) {
         for (let c = 0; c < SIZE; c++) {
           const cell = document.createElement('button');
           cell.className = 'cell';
           cell.type = 'button';
           cell.setAttribute('aria-label', `行 ${r + 1} 列 ${c + 1}`);
-          const flips = getFlips(r, c, currentPlayer);
-          if (flips.length) {
+          const flipping = validMoves.some(move => move.row === r && move.col === c);
+          if (flipping && currentPlayer === HUMAN) {
             cell.classList.add('valid');
-            validMoves.push([r, c]);
           }
           if (board[r][c] !== EMPTY) {
             const disc = document.createElement('span');
@@ -189,35 +222,150 @@
           boardEl.appendChild(cell);
         }
       }
+
       if (!validMoves.length) {
         if (!hasValidMoves(getOpponent(currentPlayer))) {
           updateStatus();
           endGame();
-        } else {
-          messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} は打てる手がありません。パスします。`;
+          return;
         }
+        messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} は打てる手がありません。パスします。`;
       } else {
-        messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} の手番です。`; 
+        messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} の手番です。`;
       }
       updateStatus();
     }
 
+    function hasValidMoves(player) {
+      return getValidMoves(player).length > 0;
+    }
+
+    function applyMove(move, player) {
+      const { row, col, flips } = move;
+      board[row][col] = player;
+      flips.forEach(([r, c]) => { board[r][c] = player; });
+    }
+
+    function chooseAiMove(player) {
+      const options = getValidMoves(player);
+      if (!options.length) return null;
+      if (difficulty === 'easy') {
+        return options[Math.floor(Math.random() * options.length)];
+      }
+
+      const scored = options.map(move => {
+        const flipScore = move.flips.length * 4;
+        const positionScore = POSITION_SCORE[move.row][move.col];
+        let score = flipScore + positionScore;
+        if (difficulty === 'hard') {
+          const opponentMoves = getValidMoves(getOpponent(player)).length;
+          score += (50 - opponentMoves * 5);
+        }
+        return { move, score };
+      });
+
+      scored.sort((a, b) => b.score - a.score);
+      const topScore = scored[0].score;
+      const topChoices = scored.filter(entry => entry.score === topScore).map(entry => entry.move);
+      return topChoices[Math.floor(Math.random() * topChoices.length)];
+    }
+
     function handleCellClick(row, col) {
-      const flips = getFlips(row, col, currentPlayer);
-      if (!flips.length) return;
-      board[row][col] = currentPlayer;
-      flips.forEach(([r, c]) => board[r][c] = currentPlayer);
-      currentPlayer = getOpponent(currentPlayer);
+      if (currentPlayer !== HUMAN) return;
+      const move = getValidMoves(HUMAN).find(m => m.row === row && m.col === col);
+      if (!move) return;
+      applyMove(move, HUMAN);
+      currentPlayer = COMPUTER;
+      processNextTurn();
+    }
+
+    function processNextTurn() {
       if (!hasValidMoves(currentPlayer)) {
-        if (!hasValidMoves(getOpponent(currentPlayer))) {
+        const opponent = getOpponent(currentPlayer);
+        if (!hasValidMoves(opponent)) {
           renderBoard();
           return;
         }
-        messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} はパスします。`;
-        currentPlayer = getOpponent(currentPlayer);
+        messageEl.textContent = `${currentPlayer === BLACK ? '黒' : '白'} は打てる手がありません。パスします。`;
+        currentPlayer = opponent;
+        if (currentPlayer === COMPUTER) {
+          setTimeout(processNextTurn, 500);
+          return;
+        }
       }
       renderBoard();
+      if (currentPlayer === COMPUTER) {
+        setTimeout(() => {
+          const aiMove = chooseAiMove(COMPUTER);
+          if (aiMove) {
+            applyMove(aiMove, COMPUTER);
+            currentPlayer = HUMAN;
+          }
+          processNextTurn();
+        }, 500);
+      }
     }
+
+    function createAudioContext() {
+      if (audioContext) return;
+      audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    function startBgm() {
+      createAudioContext();
+      const gain = audioContext.createGain();
+      gain.gain.value = 0.16;
+      gain.connect(audioContext.destination);
+
+      const notes = [0, 3, 5, 7, 10, 7, 5, 3];
+      let step = 0;
+
+      function playNote() {
+        if (!bgmIsPlaying) return;
+        const note = notes[step % notes.length];
+        const frequency = 220 * Math.pow(2, note / 12);
+        const osc = audioContext.createOscillator();
+        const envelope = audioContext.createGain();
+        osc.type = 'triangle';
+        osc.frequency.value = frequency;
+        envelope.gain.setValueAtTime(0, audioContext.currentTime);
+        envelope.gain.linearRampToValueAtTime(0.14, audioContext.currentTime + 0.02);
+        envelope.gain.exponentialRampToValueAtTime(0.001, audioContext.currentTime + 0.35);
+        osc.connect(envelope).connect(gain);
+        osc.start();
+        osc.stop(audioContext.currentTime + 0.36);
+        step += 1;
+        bgmTimer = window.setTimeout(playNote, 360);
+      }
+
+      bgmIsPlaying = true;
+      if (!bgmTimer) playNote();
+    }
+
+    function stopBgm() {
+      bgmIsPlaying = false;
+      if (bgmTimer) {
+        clearTimeout(bgmTimer);
+        bgmTimer = null;
+      }
+    }
+
+    difficultySelect.addEventListener('change', () => {
+      difficulty = difficultySelect.value;
+    });
+
+    toggleMusicBtn.addEventListener('click', async () => {
+      if (!audioContext) createAudioContext();
+      if (!bgmIsPlaying) {
+        toggleMusicBtn.textContent = 'BGM OFF';
+        bgmIsPlaying = true;
+        await audioContext.resume();
+        startBgm();
+      } else {
+        stopBgm();
+        toggleMusicBtn.textContent = 'BGM ON';
+      }
+    });
 
     restartBtn.addEventListener('click', () => {
       currentPlayer = BLACK;
